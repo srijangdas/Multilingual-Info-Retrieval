@@ -80,16 +80,15 @@ Every engine is evaluated against the MIRACL **qrels** on the same queries.
 
 ```
 .
-├── notebooks/
-│   ├── 01_build_indexes.ipynb      # corpus loading + BM25 and dense index creation
-│   ├── 02_bm25.ipynb               # BM25 engine
-│   ├── 03_dense_e5.ipynb           # E5 dense engine
-│   ├── 04_hybrid.ipynb             # hybrid engine
-│   ├── 05_bm25_translate.ipynb     # translate + BM25 engine
-│   └── 06_evaluation.ipynb         # metrics against qrels
-├── data/                           # queries and qrels (stored on Drive)
-├── indexes/                        # BM25 and dense indexes (stored on Drive)
-└── README.md
+Engine/
+  Engine_A(BM25).ipynb
+  Engine_B(Dense_Network).ipynb
+Index/
+  English_corpus_index.ipynb
+  Hindi_corpus_index.ipynb
+TestSet
+  Test_Set_Creation.ipynb
+README.md
 ```
 
 ---
