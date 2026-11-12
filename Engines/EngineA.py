@@ -178,6 +178,22 @@ def load_set(lang, kind):
     return q, r, meta
 
 
+def load_en2hi_set():
+    """Hindi translations of English eval queries with English qrels re-keyed to Hindi IDs."""
+    root = os.path.join(BASE, "en2hi")
+    q = json.load(open(f"{root}/eval_queries.json", encoding="utf-8"))
+    mapping = json.load(open(f"{root}/query_id_mapping.json", encoding="utf-8"))
+    english_queries = json.load(open(f"{BASE}/en/eval_queries.json", encoding="utf-8"))
+    english_qrels = json.load(open(f"{BASE}/en/eval_qrels.json", encoding="utf-8"))
+    hindi_to_english = mapping["hindi_to_english"]
+    qrels = {hid: english_qrels[eid] for hid, eid in hindi_to_english.items() if hid in q}
+    english_query_by_hindi = {hid: english_queries[eid] for hid, eid in hindi_to_english.items()
+                              if hid in q and eid in english_queries}
+    if set(q) != set(qrels) or set(q) != set(english_query_by_hindi):
+        raise ValueError("en2hi queries, English qrels, and query-ID mapping do not align")
+    return q, qrels, english_query_by_hindi
+
+
 def query_metrics(ranked, rel):
     """ranked: list of docids (top 100). rel: set of relevant docids. Binary relevance."""
     R = len(rel)
@@ -198,13 +214,17 @@ def index_size_mb(path):
     return sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(path) for f in fs) / 1e6
 
 
-def evaluate(engine, queries, qrels, label, idx_mb):
-    engine.searcher.search(next(iter(queries.values())), 100)       # warm-up, not timed
+def evaluate(engine, queries, qrels, label, idx_mb, search_queries=None, query_transform=None):
+    search_queries = search_queries or queries
+    first_qid = next(iter(queries))
+    warmup_query = query_transform(queries[first_qid]) if query_transform else search_queries[first_qid]
+    engine.searcher.search(warmup_query, 100)  # warm-up, not timed
     per_q, lat = {}, []
     for qid, text in queries.items():
         rel = {d for d, v in qrels[qid].items() if v > 0}
         t = time.perf_counter()
-        hits = engine.searcher.search(text, 100)                    # pure retrieval time
+        search_query = query_transform(text) if query_transform else search_queries[qid]
+        hits = engine.searcher.search(search_query, 100)
         lat.append((time.perf_counter() - t) * 1000)
         per_q[qid] = query_metrics([h.docid for h in hits], rel)
     m = np.mean(list(per_q.values()), axis=0)
@@ -235,6 +255,21 @@ def run_eval(langs, out_name):
                     m = np.mean([per_q[x] for x in ids], axis=0)
                     rows.append({"Model": f"   └ {cat}", "n_queries": len(ids),
                                  "P@5": m[0], "R@100": m[1], "MAP": m[2], "NDCG@5": m[3]})
+
+        if lang == "en":
+            try:
+                hi_queries, hi_qrels, english_search_queries = load_en2hi_set()
+            except FileNotFoundError:
+                print("skipping en2hi/eval: translated query files missing")
+            else:
+                translate_hi_en = load_translator()
+                row, _ = evaluate(engine, hi_queries, hi_qrels,
+                                  "BM25-Translate hi→en [eval]", idx_mb,
+                                  query_transform=translate_hi_en)
+                rows.append(row)
+                row, _ = evaluate(engine, hi_queries, hi_qrels,
+                                  "BM25-Direct hi→en [eval]", idx_mb)
+                rows.append(row)
 
     df = pd.DataFrame(rows)
     pd.set_option("display.width", 200)

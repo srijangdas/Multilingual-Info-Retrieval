@@ -33,9 +33,11 @@ class HybridEngine:
         self.bm25 = BM25Engine(pack, lang)
         self.dense = DenseEngine(pack, model_name)
 
-    def search(self, query: str, k: int, alpha=0.5, method="minmax", depth=100):
+    def search(self, query: str, k: int, alpha=0.5, method="minmax", depth=100,
+               translate_bm25=False):
         started = time.perf_counter()
-        bh = self.bm25.searcher.search(query, depth)
+        bm25_query = self.bm25.translate_query(query) if translate_bm25 else query
+        bh = self.bm25.searcher.search(bm25_query, depth)
         b_ids = [str(h.docid) for h in bh]
         b_scores = [float(h.score) for h in bh]
         qv = self.dense.encoder.encode([f"query: {query}"], normalize_embeddings=True,
@@ -51,5 +53,9 @@ class HybridEngine:
         scores = [x[1] for x in fused]
         extras = {x[0]: {"bm25_component": x[2], "dense_component": x[3]} for x in fused}
         results = attach_passages(self.pack, ids, scores, extras)
-        return {"results": results, "latency_ms": (time.perf_counter()-started)*1000,
-                "fusion": {"alpha": alpha, "method": method, "candidate_depth": depth}}
+        payload = {"results": results, "latency_ms": (time.perf_counter()-started)*1000,
+                   "fusion": {"alpha": alpha, "method": method, "candidate_depth": depth}}
+        if translate_bm25:
+            payload["retrieval_mode"] = "bm25_translate+dense"
+            payload["translated_query"] = bm25_query
+        return payload

@@ -5,6 +5,10 @@ __pycache__/
 miracl_en_indexes
 miracl_hi_indexes
 miracl_eval
+!data/miracl_eval/
+data/miracl_eval/*
+!data/miracl_eval/en2hi/
+!data/miracl_eval/en2hi/**
 # C extensions
 *.so
 

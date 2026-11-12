@@ -29,11 +29,19 @@ class EngineRegistry:
 
 registry = EngineRegistry()
 
-def run_search(engine: str, scenario: str, query: str, top_k: int):
+def run_search(engine: str, scenario: str, query: str, top_k: int,
+               bm25_mode: str = "bm25_translate"):
     # HI->EN means a Hindi query searches the English target corpus.
     target_lang = "hi" if scenario == "HI-HI" else "en"
     instance = registry.get(engine, target_lang)
     if engine == "C":
         return instance.search(query, top_k, alpha=HYBRID_ALPHA,
-                               method=HYBRID_METHOD, depth=max(HYBRID_DEPTH, top_k))
+                               method=HYBRID_METHOD, depth=max(HYBRID_DEPTH, top_k),
+                               translate_bm25=(scenario == "HI-EN"))
+    if engine == "A" and scenario == "HI-EN":
+        if bm25_mode == "bm25_direct":
+            return instance.bm25_direct(query, top_k)
+        if bm25_mode == "bm25_translate":
+            return instance.bm25_translate(query, top_k)
+        raise ValueError("Engine A HI-EN bm25_mode must be bm25_translate or bm25_direct")
     return instance.search(query, top_k)

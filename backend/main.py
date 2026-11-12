@@ -18,6 +18,7 @@ class SearchRequest(BaseModel):
     scenario: Literal["EN-EN", "HI-HI", "HI-EN"]
     query: str = Field(min_length=1, max_length=2000)
     top_k: int = Field(default=DEFAULT_TOP_K, ge=1, le=MAX_TOP_K)
+    bm25_mode: Literal["bm25_translate", "bm25_direct"] = "bm25_translate"
 
 @app.get("/health")
 def health():
@@ -25,8 +26,11 @@ def health():
 
 @app.get("/api/examples")
 def examples(scenario: str = "EN-EN"):
-    lang = "hi" if scenario == "HI-HI" else "en"
-    path = eval_dir(lang) / "eval_queries.json"
+    if scenario == "HI-EN":
+        path = DATA_DIR / "miracl_eval" / "en2hi" / "eval_queries.json"
+    else:
+        lang = "hi" if scenario == "HI-HI" else "en"
+        path = eval_dir(lang) / "eval_queries.json"
     if path.exists():
         with path.open("r", encoding="utf-8") as f:
             data = json.load(f)
@@ -46,7 +50,8 @@ def examples(scenario: str = "EN-EN"):
 @app.post("/api/search")
 def search(req: SearchRequest):
     try:
-        payload = run_search(req.engine, req.scenario, req.query.strip(), req.top_k)
+        payload = run_search(req.engine, req.scenario, req.query.strip(), req.top_k,
+                             bm25_mode=req.bm25_mode)
         return {"engine": req.engine, "scenario": req.scenario, "query": req.query,
                 "target_corpus": "hi" if req.scenario == "HI-HI" else "en",
                 **payload}
@@ -66,4 +71,10 @@ def evaluation_status():
             "hard_queries": (folder / "hard_queries.json").exists(),
             "hard_qrels": (folder / "hard_qrels.json").exists(),
         }
+    en2hi = DATA_DIR / "miracl_eval" / "en2hi"
+    expected["en2hi"] = {
+        "eval_queries": (en2hi / "eval_queries.json").exists(),
+        "query_id_mapping": (en2hi / "query_id_mapping.json").exists(),
+        "english_qrels": (eval_dir("en") / "eval_qrels.json").exists(),
+    }
     return {"files": expected, "note": "Evaluation requires matching query and qrels files; no benchmark scores are fabricated."}

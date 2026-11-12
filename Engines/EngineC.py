@@ -45,6 +45,7 @@ import os
 import random
 import textwrap
 import time
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
@@ -56,6 +57,7 @@ E5_MODEL = "intfloat/multilingual-e5-small"   # same model used to build both de
 BM25_K1, BM25_B = 0.9, 0.4                    # same as Engine A
 DEFAULT_ALPHA = 0.5
 DEFAULT_DEPTH = 100                           # candidates taken from each engine
+MT_NAME = "Helsinki-NLP/opus-mt-hi-en"
 
 BASE = PACKS = RESULTS_DIR = None
 
@@ -135,6 +137,37 @@ def load_set(lang, kind):
         r = json.load(open(f"{E}/hard_qrels.json"))
         meta = json.load(open(f"{E}/hard_meta.json"))
     return q, r, meta
+
+
+def load_en2hi_set():
+    """Load Hindi eval queries and relevance judgments for their English source IDs."""
+    root = f"{BASE}/en2hi"
+    q = json.load(open(f"{root}/eval_queries.json", encoding="utf-8"))
+    mapping = json.load(open(f"{root}/query_id_mapping.json", encoding="utf-8"))
+    english_qrels = json.load(open(f"{BASE}/en/eval_qrels.json", encoding="utf-8"))
+    hindi_to_english = mapping["hindi_to_english"]
+    qrels = {hid: english_qrels[eid] for hid, eid in hindi_to_english.items() if hid in q}
+    if set(q) != set(qrels):
+        raise ValueError("en2hi queries, English qrels, and ID mapping do not align")
+    return q, qrels
+
+
+@lru_cache(maxsize=1)
+def load_hi_en_translator():
+    import torch
+    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    tokenizer = AutoTokenizer.from_pretrained(MT_NAME)
+    model = AutoModelForSeq2SeqLM.from_pretrained(MT_NAME).to(device).eval()
+
+    def translate(query):
+        inputs = tokenizer(query, return_tensors="pt", truncation=True, max_length=128).to(device)
+        with torch.inference_mode():
+            output = model.generate(**inputs, max_new_tokens=128, num_beams=5)
+        return tokenizer.decode(output[0], skip_special_tokens=True).strip()
+
+    return translate
 
 
 def query_metrics(ranked, rel):
@@ -275,18 +308,21 @@ class HybridEngine:
         ids = [self.docids[idx[0][j]] for j in keep]
         return ids, [float(scores[0][j]) for j in keep], (t1 - t0) * 1000, (t2 - t1) * 1000
 
-    def candidates(self, query, depth=DEFAULT_DEPTH):
+    def candidates(self, query, depth=DEFAULT_DEPTH, bm25_query=None, translate_bm25=False):
         """Run both retrievers once. Cache this to try many alphas without re-retrieving."""
         t = time.perf_counter()
-        b_ids, b_sc = self._bm25(query, depth)
+        if translate_bm25:
+            bm25_query = load_hi_en_translator()(query)
+        b_ids, b_sc = self._bm25(bm25_query if bm25_query is not None else query, depth)
         bm25_ms = (time.perf_counter() - t) * 1000
         d_ids, d_sc, enc_ms, faiss_ms = self._dense(query, depth)
         return {"bm25": (b_ids, b_sc), "dense": (d_ids, d_sc),
                 "bm25_ms": bm25_ms, "encode_ms": enc_ms, "faiss_ms": faiss_ms}
 
     # ---- public API ---------------------------------------------------------
-    def search(self, query, k=10, alpha=DEFAULT_ALPHA, depth=DEFAULT_DEPTH, method="minmax"):
-        cand = self.candidates(query, depth)
+    def search(self, query, k=10, alpha=DEFAULT_ALPHA, depth=DEFAULT_DEPTH, method="minmax",
+               translate_bm25=False):
+        cand = self.candidates(query, depth, translate_bm25=translate_bm25)
         fused = fuse(cand, alpha, method=method, k=k)
         texts = self.texts([d for d, *_ in fused])
         out = []
@@ -392,17 +428,19 @@ def tune_alpha(engine, lang, metric="NDCG@5", grid=None, method="minmax",
 # ----------------------------------------------------------------------------
 # Evaluation: BM25-only, dense-only and hybrid in ONE pass, same queries
 # ----------------------------------------------------------------------------
-def evaluate_all(engine, lang, qs, rs, label, alpha, method, depth, idx_mb):
+def evaluate_all(engine, lang, qs, rs, label, alpha, method, depth, idx_mb,
+                 translate_bm25=False, scenario=None):
     """One retrieval pass per query. Latency is what each system would really cost:
        BM25-only = BM25 time, dense-only = encode + FAISS, hybrid = all three + fusion."""
     if not qs:
         return [], {}
-    engine.candidates(next(iter(qs.values())), depth)                # warm-up (not timed)
+    first_qid = next(iter(qs))
+    engine.candidates(qs[first_qid], depth, translate_bm25=translate_bm25)  # warm-up (not timed)
     per_q = {"bm25": {}, "dense": {}, "hybrid": {}}
     lat = {"bm25": [], "dense": [], "hybrid": []}
     for qid, text in qs.items():
         rel = {d for d, v in rs[qid].items() if v > 0}
-        c = engine.candidates(text, depth)
+        c = engine.candidates(text, depth, translate_bm25=translate_bm25)
         t = time.perf_counter()
         fused = fuse(c, alpha, method, k=100)
         fuse_ms = (time.perf_counter() - t) * 1000
@@ -413,9 +451,10 @@ def evaluate_all(engine, lang, qs, rs, label, alpha, method, depth, idx_mb):
         lat["dense"].append(c["encode_ms"] + c["faiss_ms"])
         lat["hybrid"].append(c["bm25_ms"] + c["encode_ms"] + c["faiss_ms"] + fuse_ms)
 
-    names = {"bm25": f"BM25 {lang}→{lang} {label}",
-             "dense": f"E5 dense {lang}→{lang} {label}",
-             "hybrid": f"Hybrid {lang}→{lang} {label} (α={alpha}, {method})"}
+    source_lang, target_lang = ("hi", "en") if scenario == "en2hi" else (lang, lang)
+    names = {"bm25": f"BM25 {source_lang}→{target_lang} {label}",
+             "dense": f"E5 dense {source_lang}→{target_lang} {label}",
+             "hybrid": f"Hybrid {source_lang}→{target_lang} {label} (α={alpha}, {method})"}
     rows = []
     for key in ["bm25", "dense", "hybrid"]:
         m = np.mean(list(per_q[key].values()), axis=0)
@@ -458,6 +497,15 @@ def run_eval(engine, lang, alpha=None, method=None, depth=None):
             m = np.mean([per_q[x] for x in ids], axis=0)
             rows.append({"Model": f"   └ hybrid {cat}", "n_queries": len(ids),
                          "P@5": m[0], "R@100": m[1], "MAP": m[2], "NDCG@5": m[3]})
+    if lang == "en":
+        try:
+            hi_q, hi_r = load_en2hi_set()
+        except FileNotFoundError:
+            print("skipping en2hi/eval: translated query files missing")
+        else:
+            r3, _ = evaluate_all(engine, lang, hi_q, hi_r, "[en2hi eval]", alpha,
+                                 method, depth, idx_mb, translate_bm25=True, scenario="en2hi")
+            rows += r3
     return pd.DataFrame(rows)
 
 

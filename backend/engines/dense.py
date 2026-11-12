@@ -6,7 +6,7 @@ import numpy as np
 from .common import attach_passages
 
 class DenseEngine:
-    """Engine B: multilingual-e5-small query encoder + FAISS cosine/IP search."""
+    """Engine B: multilingual-E5 embeds Hindi queries directly for English-index search."""
     def __init__(self, pack: Path, model_name: str):
         import faiss
         from sentence_transformers import SentenceTransformer

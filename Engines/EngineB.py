@@ -144,6 +144,19 @@ def load_set(lang, kind):
     return q, r, meta
 
 
+def load_en2hi_set():
+    """Hindi queries paired with relevance judgments for their English source IDs."""
+    root = os.path.join(BASE, "en2hi")
+    q = json.load(open(f"{root}/eval_queries.json", encoding="utf-8"))
+    mapping = json.load(open(f"{root}/query_id_mapping.json", encoding="utf-8"))
+    english_qrels = json.load(open(f"{BASE}/en/eval_qrels.json", encoding="utf-8"))
+    hindi_to_english = mapping["hindi_to_english"]
+    r = {hid: english_qrels[eid] for hid, eid in hindi_to_english.items() if hid in q}
+    if set(q) != set(r):
+        raise ValueError("en2hi queries, English qrels, and ID mapping do not align")
+    return q, r, {}
+
+
 def load_sets(langs):
     sets = {}
     for lang in langs:
@@ -152,6 +165,11 @@ def load_sets(langs):
                 sets[(lang, kind)] = load_set(lang, kind)
             except FileNotFoundError:
                 print(f"missing {lang}/{kind} files, skipping")
+    if "en" in langs:
+        try:
+            sets[("en2hi", "eval")] = load_en2hi_set()
+        except FileNotFoundError:
+            print("missing en2hi/eval files, skipping")
     return sets
 
 
@@ -236,7 +254,9 @@ def evaluate(eng, q, r, label):
 def run_eval(engines, sets, out_name):
     rows = []
     for (lang, kind), (q, r, meta) in sets.items():
-        per_q, row = evaluate(engines[lang], q, r, f"E5 dense {lang}→{lang} [{kind}]")
+        target_lang = "en" if lang == "en2hi" else lang
+        scenario = "HI→EN" if lang == "en2hi" else f"{lang}→{lang}"
+        per_q, row = evaluate(engines[target_lang], q, r, f"E5 dense {scenario} [{kind}]")
         rows.append(row)
         if kind == "hard":
             for cat in sorted(set(meta.values())):
