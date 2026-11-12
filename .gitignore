@@ -2,7 +2,9 @@
 __pycache__/
 *.py[codz]
 *$py.class
-
+miracl_en_indexes
+miracl_hi_indexes
+miracl_eval
 # C extensions
 *.so
 
