@@ -1,0 +1,10 @@
+
+.venv/
+__pycache__/
+*.py[cod]
+.env
+data/miracl_en_indexes/
+data/miracl_hi_indexes/
+data/miracl_eval/
+results/
+.streamlit/secrets.toml

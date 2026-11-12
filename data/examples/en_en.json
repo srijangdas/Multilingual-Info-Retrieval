@@ -1,0 +1,10 @@
+[
+  {
+    "qid": "example-en-1",
+    "query": "Who developed the theory of relativity?"
+  },
+  {
+    "qid": "example-en-2",
+    "query": "What are the main causes of climate change?"
+  }
+]
