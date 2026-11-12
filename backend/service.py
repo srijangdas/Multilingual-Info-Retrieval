@@ -1,4 +1,3 @@
-
 from functools import lru_cache
 from pathlib import Path
 from backend.config import pack_dir, MODEL_NAME, HYBRID_ALPHA, HYBRID_METHOD, HYBRID_DEPTH
@@ -31,7 +30,7 @@ registry = EngineRegistry()
 
 def run_search(engine: str, scenario: str, query: str, top_k: int,
                bm25_mode: str = "bm25_translate"):
-    # HI->EN means a Hindi query searches the English target corpus.
+
     target_lang = "hi" if scenario == "HI-HI" else "en"
     instance = registry.get(engine, target_lang)
     if engine == "C":

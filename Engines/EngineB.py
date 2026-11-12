@@ -35,12 +35,8 @@ import time
 import numpy as np
 import pandas as pd
 
-# ----------------------------------------------------------------------------
-# Config
-# ----------------------------------------------------------------------------
-MODEL = "intfloat/multilingual-e5-small"     # same model used to build both dense indexes
+MODEL = "intfloat/multilingual-e5-small"
 BASE = PACKS = None
-
 
 def configure(data_dir=None):
     global BASE, PACKS
@@ -51,9 +47,7 @@ def configure(data_dir=None):
              "hi": os.path.join(root, "miracl_hi_indexes")}
     return root
 
-
 configure()
-
 
 def check_files(langs, need_eval=True, need_passages=False):
     missing = []
@@ -70,10 +64,6 @@ def check_files(langs, need_eval=True, need_passages=False):
         raise SystemExit("Missing files:\n  " + "\n  ".join(missing) +
                          "\nCheck --data-dir and the folder layout in the file header.")
 
-
-# ----------------------------------------------------------------------------
-# Load the dense indexes and the query encoder
-# ----------------------------------------------------------------------------
 def get_encoder(model_name=MODEL, max_seq_length=256):
     import torch
     from sentence_transformers import SentenceTransformer
@@ -84,7 +74,6 @@ def get_encoder(model_name=MODEL, max_seq_length=256):
     model.max_seq_length = max_seq_length
     print(f"Query encoder : {model_name} on {device}\n")
     return model
-
 
 class DenseEngine:
     def __init__(self, lang, encoder, pack=None):
@@ -103,14 +92,13 @@ class DenseEngine:
         t1 = time.perf_counter()
         scores, idx = self.index.search(qv, k)
         t2 = time.perf_counter()
-        keep = [j for j, i in enumerate(idx[0]) if i >= 0]               # faiss pads with -1
+        keep = [j for j, i in enumerate(idx[0]) if i >= 0]
         ids = [self.docids[idx[0][j]] for j in keep]
-        return ids, scores[0][keep], (t1 - t0) * 1000, (t2 - t1) * 1000    # encode ms, faiss ms
+        return ids, scores[0][keep], (t1 - t0) * 1000, (t2 - t1) * 1000
 
     def index_mb(self):
         return (os.path.getsize(f"{self.pack}/dense.faiss") +
                 os.path.getsize(f"{self.pack}/docids.json")) / 1e6
-
 
 def fetch_texts(lang, ids):
     """scan passages.jsonl once and return {docid: (title, text)} for the wanted ids only"""
@@ -124,10 +112,6 @@ def fetch_texts(lang, ids):
                     break
     return out
 
-
-# ----------------------------------------------------------------------------
-# Data / metrics (same as the notebook)
-# ----------------------------------------------------------------------------
 def load_set(lang, kind):
     """kind='eval': all usable dev queries | kind='hard': the 20-query suite (usable ones)"""
     E = f"{BASE}/{lang}"
@@ -143,7 +127,6 @@ def load_set(lang, kind):
         meta = json.load(open(f"{E}/hard_meta.json"))
     return q, r, meta
 
-
 def load_en2hi_set():
     """Hindi queries paired with relevance judgments for their English source IDs."""
     root = os.path.join(BASE, "en2hi")
@@ -155,7 +138,6 @@ def load_en2hi_set():
     if set(q) != set(r):
         raise ValueError("en2hi queries, English qrels, and ID mapping do not align")
     return q, r, {}
-
 
 def load_sets(langs):
     sets = {}
@@ -172,7 +154,6 @@ def load_sets(langs):
             print("missing en2hi/eval files, skipping")
     return sets
 
-
 def query_metrics(ranked, rel):
     R = len(rel)
     p5 = sum(d in rel for d in ranked[:5]) / 5
@@ -186,10 +167,6 @@ def query_metrics(ranked, rel):
     idcg = sum(1 / math.log2(i + 1) for i in range(1, min(R, 5) + 1))
     return p5, r100, s / R, dcg / idcg
 
-
-# ----------------------------------------------------------------------------
-# Modes
-# ----------------------------------------------------------------------------
 def run_inspect(engines, sets):
     print(f"{'lang':<5}{'vectors':>12}{'dim':>6}{'dense.faiss (MB)':>20}{'first 3 docids':>30}")
     for lang, e in engines.items():
@@ -202,7 +179,6 @@ def run_inspect(engines, sets):
         non = [sum(v == 0 for v in r[x].values()) for x in q]
         print(f"{lang + '/' + kind:<10}{len(q):>9}{np.mean(rel):>20.2f}{np.mean(non):>20.2f}")
 
-    # one query, with its judged passages
     for lang in engines:
         q, r, _ = sets[(lang, "eval")]
         qid = next(iter(q))
@@ -212,7 +188,6 @@ def run_inspect(engines, sets):
             t, x = texts.get(docid, ("?", "?"))
             print(f"  label={lab} ({'RELEVANT' if lab else 'judged NOT relevant'}) | {docid} | {t}\n"
                   f"      {x[:150]}...")
-
 
 def run_examples(engines, sets, n=5, k=5):
     for lang, eng in engines.items():
@@ -235,9 +210,8 @@ def run_examples(engines, sets, n=5, k=5):
             ranks = [i + 1 for i, d in enumerate(ids) if d in rel]
             print(f"  → relevant passage rank(s) in top-100: {ranks if ranks else 'none found'}")
 
-
 def evaluate(eng, q, r, label):
-    eng.search(next(iter(q.values())))                          # warm-up (not timed)
+    eng.search(next(iter(q.values())))
     per_q, enc, srch = {}, [], []
     for qid, text in q.items():
         ids, _, te, ts = eng.search(text)
@@ -249,7 +223,6 @@ def evaluate(eng, q, r, label):
                    "NDCG@5": m[3], "Latency (ms)": np.mean(enc) + np.mean(srch),
                    "Encode (ms)": np.mean(enc), "FAISS (ms)": np.mean(srch),
                    "Index (MB)": eng.index_mb()}
-
 
 def run_eval(engines, sets, out_name):
     rows = []
@@ -273,7 +246,6 @@ def run_eval(engines, sets, out_name):
     df.to_csv(f"{out_dir}/{out_name}", index=False)
     print(f"saved {out_dir}/{out_name}")
 
-
 def run_demo(engines, query, k):
     for lang, eng in engines.items():
         ids, sc, te, ts = eng.search(query, k)
@@ -283,8 +255,6 @@ def run_demo(engines, query, k):
             t, tx = texts.get(d, ("?", "?"))
             print(f"#{rank} sim={s:.3f} | {d} | {t}\n      {tx[:200]}...")
 
-
-# ----------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description="Engine B: dense retrieval (E5 + FAISS)")
     ap.add_argument("mode", choices=["inspect", "examples", "eval", "demo"])
@@ -317,7 +287,6 @@ def main():
         run_eval(engines, sets, args.out)
     else:
         run_demo(engines, args.query, args.k)
-
 
 if __name__ == "__main__":
     main()

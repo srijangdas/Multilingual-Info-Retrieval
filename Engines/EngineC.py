@@ -50,17 +50,13 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 
-# ----------------------------------------------------------------------------
-# Config. Paths are set by configure(); override with --data-dir or env var MIRACL_DATA_DIR.
-# ----------------------------------------------------------------------------
-E5_MODEL = "intfloat/multilingual-e5-small"   # same model used to build both dense indexes
-BM25_K1, BM25_B = 0.9, 0.4                    # same as Engine A
+E5_MODEL = "intfloat/multilingual-e5-small"
+BM25_K1, BM25_B = 0.9, 0.4
 DEFAULT_ALPHA = 0.5
-DEFAULT_DEPTH = 100                           # candidates taken from each engine
+DEFAULT_DEPTH = 100
 MT_NAME = "Helsinki-NLP/opus-mt-hi-en"
 
 BASE = PACKS = RESULTS_DIR = None
-
 
 def configure(data_dir=None):
     """Point the module at your local copy of the Drive folders."""
@@ -72,7 +68,6 @@ def configure(data_dir=None):
              "hi": os.path.join(root, "miracl_hi_indexes")}
     RESULTS_DIR = os.path.join(BASE, "results")
     return root
-
 
 def ensure_java_home():
     """pyjnius (used by Pyserini) needs JAVA_HOME. If it is unset but `java` is on PATH,
@@ -116,13 +111,8 @@ def check_setup(langs):
         raise SystemExit("Missing files:\n  " + "\n  ".join(missing) +
                          "\nCheck --data-dir and the folder layout in the file header.")
 
-
 configure()
 
-
-# ----------------------------------------------------------------------------
-# Data / metrics (identical to the notebooks)
-# ----------------------------------------------------------------------------
 def load_set(lang, kind):
     """kind = 'eval' (all usable dev queries) or 'hard' (the 20-query suite, usable ones)"""
     E = f"{BASE}/{lang}"
@@ -138,7 +128,6 @@ def load_set(lang, kind):
         meta = json.load(open(f"{E}/hard_meta.json"))
     return q, r, meta
 
-
 def load_en2hi_set():
     """Load Hindi eval queries and relevance judgments for their English source IDs."""
     root = f"{BASE}/en2hi"
@@ -150,7 +139,6 @@ def load_en2hi_set():
     if set(q) != set(qrels):
         raise ValueError("en2hi queries, English qrels, and ID mapping do not align")
     return q, qrels
-
 
 @lru_cache(maxsize=1)
 def load_hi_en_translator():
@@ -169,7 +157,6 @@ def load_hi_en_translator():
 
     return translate
 
-
 def query_metrics(ranked, rel):
     """ranked: list of docids (top 100). rel: set of relevant docids. Binary relevance."""
     R = len(rel)
@@ -184,17 +171,11 @@ def query_metrics(ranked, rel):
     idcg = sum(1 / math.log2(i + 1) for i in range(1, min(R, 5) + 1))
     return p5, r100, s / R, dcg / idcg
 
-
 METRIC_IDX = {"P@5": 0, "R@100": 1, "MAP": 2, "NDCG@5": 3}
-
 
 def dir_size_mb(path):
     return sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(path) for f in fs) / 1e6
 
-
-# ----------------------------------------------------------------------------
-# Score fusion (pure functions, no model needed)
-# ----------------------------------------------------------------------------
 def minmax(scores):
     """Scale to [0, 1]. If all scores are equal (e.g. a single hit) every item gets 1.0."""
     a = np.asarray(scores, dtype="float64")
@@ -204,7 +185,6 @@ def minmax(scores):
     if hi - lo < 1e-12:
         return np.ones_like(a)
     return (a - lo) / (hi - lo)
-
 
 def fuse(cand, alpha, method="minmax", rrf_k=60, k=100):
     """
@@ -224,16 +204,12 @@ def fuse(cand, alpha, method="minmax", rrf_k=60, k=100):
     else:
         raise ValueError(f"unknown fusion method: {method}")
 
-    union = list(b_ids) + [d for d in d_ids if d not in bn]     # deterministic order for ties
+    union = list(b_ids) + [d for d in d_ids if d not in bn]
     scored = [(d, alpha * bn.get(d, 0.0) + (1 - alpha) * dn.get(d, 0.0), bn.get(d, 0.0), dn.get(d, 0.0))
               for d in union]
-    scored.sort(key=lambda t: -t[1])                             # stable sort
+    scored.sort(key=lambda t: -t[1])
     return scored[:k]
 
-
-# ----------------------------------------------------------------------------
-# Query encoder (shared by en and hi: same model built both dense indexes)
-# ----------------------------------------------------------------------------
 def get_encoder(model_name=E5_MODEL, max_seq_length=256):
     import torch
     from sentence_transformers import SentenceTransformer
@@ -245,10 +221,6 @@ def get_encoder(model_name=E5_MODEL, max_seq_length=256):
     print(f"Query encoder: {model_name} on {device}")
     return model
 
-
-# ----------------------------------------------------------------------------
-# The engine
-# ----------------------------------------------------------------------------
 class HybridEngine:
     def __init__(self, lang="en", pack=None, encoder=None, k1=BM25_K1, b=BM25_B,
                  load_passages=False):
@@ -259,19 +231,16 @@ class HybridEngine:
         self.pack = pack or PACKS[lang]
         self.encoder = encoder or get_encoder()
 
-        # --- BM25 (analyzer language must match the one used at indexing time) ---
         self.searcher = LuceneSearcher(f"{self.pack}/bm25_index")
         if lang != "en":
             self.searcher.set_language(lang)
         self.searcher.set_bm25(k1=k1, b=b)
 
-        # --- Dense ---
         self.index = faiss.read_index(f"{self.pack}/dense.faiss")
         self.docids = json.load(open(f"{self.pack}/docids.json"))
         assert self.index.ntotal == len(self.docids), \
             f"{lang}: dense.faiss and docids.json do not match"
 
-        # --- Optional in-memory passage text (big: ~0.5 GB on disk for en) ---
         self.passages = None
         if load_passages:
             self.passages = {}
@@ -292,7 +261,6 @@ class HybridEngine:
             print(f"WARNING [{self.lang}]: dense docids not found in the BM25 index, e.g. {missing}. "
                   f"Fusion will not work until both indexes use the same ids.")
 
-    # ---- the two retrievers -------------------------------------------------
     def _bm25(self, query, k):
         hits = self.searcher.search(query, k)
         return [h.docid for h in hits], [h.score for h in hits]
@@ -304,7 +272,7 @@ class HybridEngine:
         t1 = time.perf_counter()
         scores, idx = self.index.search(qv, k)
         t2 = time.perf_counter()
-        keep = [j for j, i in enumerate(idx[0]) if i >= 0]          # faiss pads with -1
+        keep = [j for j, i in enumerate(idx[0]) if i >= 0]
         ids = [self.docids[idx[0][j]] for j in keep]
         return ids, [float(scores[0][j]) for j in keep], (t1 - t0) * 1000, (t2 - t1) * 1000
 
@@ -319,7 +287,6 @@ class HybridEngine:
         return {"bm25": (b_ids, b_sc), "dense": (d_ids, d_sc),
                 "bm25_ms": bm25_ms, "encode_ms": enc_ms, "faiss_ms": faiss_ms}
 
-    # ---- public API ---------------------------------------------------------
     def search(self, query, k=10, alpha=DEFAULT_ALPHA, depth=DEFAULT_DEPTH, method="minmax",
                translate_bm25=False):
         cand = self.candidates(query, depth, translate_bm25=translate_bm25)
@@ -354,7 +321,6 @@ class HybridEngine:
                  os.path.getsize(f"{self.pack}/docids.json")) / 1e6
         return bm25 + dense
 
-
 def show(results, query, alpha=None, width=100, max_chars=400):
     print("=" * width)
     print(f"QUERY: {query}" + (f"   (alpha={alpha})" if alpha is not None else ""))
@@ -367,17 +333,11 @@ def show(results, query, alpha=None, width=100, max_chars=400):
         print(textwrap.fill(body, width=width, initial_indent="  ", subsequent_indent="  "))
     print("-" * width)
 
-
-# ----------------------------------------------------------------------------
-# Alpha tuning (validation queries only)
-# ----------------------------------------------------------------------------
 def split_path(lang):
     return f"{RESULTS_DIR}/hybrid_split_{lang}.json"
 
-
 def alpha_path():
     return f"{RESULTS_DIR}/hybrid_alpha.json"
-
 
 def make_split(lang, val_frac=0.5, seed=42):
     """Validation = random part of the dev queries minus the hard-suite ids. Test = the rest of dev."""
@@ -393,7 +353,6 @@ def make_split(lang, val_frac=0.5, seed=42):
     test = [x for x in q if x not in val_set]
     return val, test
 
-
 def tune_alpha(engine, lang, metric="NDCG@5", grid=None, method="minmax",
                depth=DEFAULT_DEPTH, val_frac=0.5, seed=42):
     grid = grid if grid is not None else [round(a, 2) for a in np.arange(0.0, 1.0001, 0.1)]
@@ -402,7 +361,7 @@ def tune_alpha(engine, lang, metric="NDCG@5", grid=None, method="minmax",
     print(f"[{lang}] tuning alpha on {len(val)} validation queries "
           f"({len(test)} dev queries held out, hard suite excluded from tuning)")
 
-    cache = {x: engine.candidates(q[x], depth) for x in val}       # retrieve once, fuse many times
+    cache = {x: engine.candidates(q[x], depth) for x in val}
     rels = {x: {d for d, v in r[x].items() if v > 0} for x in val}
 
     rows = []
@@ -424,10 +383,6 @@ def tune_alpha(engine, lang, metric="NDCG@5", grid=None, method="minmax",
     df.to_csv(f"{RESULTS_DIR}/hybrid_alpha_sweep_{lang}.csv", index=False)
     return best, df
 
-
-# ----------------------------------------------------------------------------
-# Evaluation: BM25-only, dense-only and hybrid in ONE pass, same queries
-# ----------------------------------------------------------------------------
 def evaluate_all(engine, lang, qs, rs, label, alpha, method, depth, idx_mb,
                  translate_bm25=False, scenario=None):
     """One retrieval pass per query. Latency is what each system would really cost:
@@ -435,7 +390,7 @@ def evaluate_all(engine, lang, qs, rs, label, alpha, method, depth, idx_mb,
     if not qs:
         return [], {}
     first_qid = next(iter(qs))
-    engine.candidates(qs[first_qid], depth, translate_bm25=translate_bm25)  # warm-up (not timed)
+    engine.candidates(qs[first_qid], depth, translate_bm25=translate_bm25)
     per_q = {"bm25": {}, "dense": {}, "hybrid": {}}
     lat = {"bm25": [], "dense": [], "hybrid": []}
     for qid, text in qs.items():
@@ -462,7 +417,6 @@ def evaluate_all(engine, lang, qs, rs, label, alpha, method, depth, idx_mb,
                      "MAP": m[2], "NDCG@5": m[3], "Latency (ms)": np.mean(lat[key]),
                      "Index (MB)": idx_mb if key == "hybrid" else None})
     return rows, per_q["hybrid"]
-
 
 def run_eval(engine, lang, alpha=None, method=None, depth=None):
     saved = json.load(open(alpha_path())).get(lang) if os.path.exists(alpha_path()) else None
@@ -492,7 +446,7 @@ def run_eval(engine, lang, alpha=None, method=None, depth=None):
     if hq:
         r2, per_q = evaluate_all(engine, lang, hq, hr, "[hard]", alpha, method, depth, idx_mb)
         rows += r2
-        for cat in sorted(set(hmeta.values())):                     # per-category, hybrid only
+        for cat in sorted(set(hmeta.values())):
             ids = [x for x in per_q if hmeta[x] == cat]
             m = np.mean([per_q[x] for x in ids], axis=0)
             rows.append({"Model": f"   └ hybrid {cat}", "n_queries": len(ids),
@@ -508,10 +462,6 @@ def run_eval(engine, lang, alpha=None, method=None, depth=None):
             rows += r3
     return pd.DataFrame(rows)
 
-
-# ----------------------------------------------------------------------------
-# CLI
-# ----------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description="Engine C: hybrid BM25 + dense retrieval")
     ap.add_argument("mode", choices=["tune", "eval", "demo"])
@@ -561,7 +511,6 @@ def main():
         out = pd.concat(all_rows, ignore_index=True)
         out.to_csv(f"{RESULTS_DIR}/hybrid_results.csv", index=False)
         print(f"saved {RESULTS_DIR}/hybrid_results.csv")
-
 
 if __name__ == "__main__":
     main()

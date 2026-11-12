@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -35,7 +34,7 @@ def examples(scenario: str = "EN-EN"):
         with path.open("r", encoding="utf-8") as f:
             data = json.load(f)
         return {"source": str(path), "queries": [{"qid": str(k), "query": v} for k, v in list(data.items())[:50]]}
-    # Replace this placeholder file with your actual query examples.
+
     placeholder = DATA_DIR / "examples" / f"{scenario.lower().replace('-', '_')}.json"
     if placeholder.exists():
         return {"source": str(placeholder), "queries": json.loads(placeholder.read_text(encoding="utf-8"))}

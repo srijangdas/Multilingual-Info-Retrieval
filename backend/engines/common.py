@@ -1,4 +1,3 @@
-
 import json
 import sqlite3
 from pathlib import Path
@@ -12,7 +11,7 @@ def fetch_passages(pack: Path, docids: Iterable[str]) -> dict:
     if db.exists():
         out = {}
         with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
-            # Chunk to stay below SQLite's bound-variable limit.
+
             for start in range(0, len(wanted), 800):
                 chunk = wanted[start:start+800]
                 marks = ",".join("?" for _ in chunk)
@@ -22,8 +21,6 @@ def fetch_passages(pack: Path, docids: Iterable[str]) -> dict:
                 out.update({str(i): {"title": t or "", "text": x or ""} for i, t, x in rows})
         return out
 
-    # Fallback for users who have not built the SQLite lookup yet. This scans JSONL
-    # and is correct but can be slow for million-passage corpora.
     source = pack / "passages.jsonl"
     wanted_set, found = set(wanted), {}
     if not source.exists():

@@ -33,12 +33,8 @@ import time
 import numpy as np
 import pandas as pd
 
-# ----------------------------------------------------------------------------
-# Config
-# ----------------------------------------------------------------------------
 BM25_K1, BM25_B = 0.9, 0.4
 BASE = PACKS = None
-
 
 def configure(data_dir=None):
     global BASE, PACKS
@@ -49,9 +45,7 @@ def configure(data_dir=None):
              "hi": os.path.join(root, "miracl_hi_indexes")}
     return root
 
-
 configure()
-
 
 def ensure_java_home():
     """pyjnius (used by Pyserini) needs JAVA_HOME. If unset but `java` is on PATH,
@@ -77,7 +71,6 @@ def ensure_java_home():
     print(f"JAVA_HOME was not set; using {home}")
     return home
 
-
 def check_files(langs, need_eval=True):
     missing = []
     for lang in langs:
@@ -92,17 +85,11 @@ def check_files(langs, need_eval=True):
         raise SystemExit("Missing files:\n  " + "\n  ".join(missing) +
                          "\nCheck --data-dir and the folder layout in the file header.")
 
-
-# ----------------------------------------------------------------------------
-# The engine
-# ----------------------------------------------------------------------------
 class BM25Engine:
     def __init__(self, pack, lang="en", k1=BM25_K1, b=BM25_B, load_passages=False):
         from pyserini.search.lucene import LuceneSearcher
         self.lang, self.pack = lang, pack
 
-        # docID -> (title, text), used to display results. Big (~0.5 GB file for en), so it is
-        # optional: evaluation does not need it, and without it texts are fetched by one file scan.
         self.passages = None
         if load_passages:
             self.passages = {}
@@ -111,7 +98,6 @@ class BM25Engine:
                     d = json.loads(line)
                     self.passages[d["id"]] = (d["title"], d["text"])
 
-        # BM25 index (the analyzer language must match the one used at indexing time)
         self.searcher = LuceneSearcher(f"{pack}/bm25_index")
         if lang != "en":
             self.searcher.set_language(lang)
@@ -142,7 +128,6 @@ class BM25Engine:
                             "title": title, "text": text})
         return results
 
-
 def show(results, query, extra=None, width=100, max_chars=500):
     print("=" * width)
     print(f"QUERY: {query}")
@@ -158,10 +143,6 @@ def show(results, query, extra=None, width=100, max_chars=500):
         print(textwrap.fill(body, width=width, initial_indent="  ", subsequent_indent="  "))
     print("-" * width)
 
-
-# ----------------------------------------------------------------------------
-# Data / metrics / evaluation (same as the notebook)
-# ----------------------------------------------------------------------------
 def load_set(lang, kind):
     """kind = 'eval' (all usable dev queries) or 'hard' (the 20-query suite)"""
     E = f"{BASE}/{lang}"
@@ -176,7 +157,6 @@ def load_set(lang, kind):
         r = json.load(open(f"{E}/hard_qrels.json"))
         meta = json.load(open(f"{E}/hard_meta.json"))
     return q, r, meta
-
 
 def load_en2hi_set():
     """Hindi translations of English eval queries with English qrels re-keyed to Hindi IDs."""
@@ -193,7 +173,6 @@ def load_en2hi_set():
         raise ValueError("en2hi queries, English qrels, and query-ID mapping do not align")
     return q, qrels, english_query_by_hindi
 
-
 def query_metrics(ranked, rel):
     """ranked: list of docids (top 100). rel: set of relevant docids. Binary relevance."""
     R = len(rel)
@@ -209,16 +188,14 @@ def query_metrics(ranked, rel):
     idcg = sum(1 / math.log2(i + 1) for i in range(1, min(R, 5) + 1))
     return p5, r100, ap, dcg / idcg
 
-
 def index_size_mb(path):
     return sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(path) for f in fs) / 1e6
-
 
 def evaluate(engine, queries, qrels, label, idx_mb, search_queries=None, query_transform=None):
     search_queries = search_queries or queries
     first_qid = next(iter(queries))
     warmup_query = query_transform(queries[first_qid]) if query_transform else search_queries[first_qid]
-    engine.searcher.search(warmup_query, 100)  # warm-up, not timed
+    engine.searcher.search(warmup_query, 100)
     per_q, lat = {}, []
     for qid, text in queries.items():
         rel = {d for d, v in qrels[qid].items() if v > 0}
@@ -232,7 +209,6 @@ def evaluate(engine, queries, qrels, label, idx_mb, search_queries=None, query_t
            "P@5": m[0], "R@100": m[1], "MAP": m[2], "NDCG@5": m[3],
            "Latency (ms)": np.mean(lat), "Index (MB)": idx_mb}
     return row, per_q
-
 
 def run_eval(langs, out_name):
     rows = []
@@ -248,7 +224,6 @@ def run_eval(langs, out_name):
             row, per_q = evaluate(engine, q, r, f"BM25 {lang}→{lang} [{kind}]", idx_mb)
             rows.append(row)
 
-            # per-category breakdown for the hard suite
             if kind == "hard":
                 for cat in sorted(set(meta.values())):
                     ids = [x for x in per_q if meta[x] == cat]
@@ -280,12 +255,7 @@ def run_eval(langs, out_name):
     print(f"saved {out_dir}/{out_name}")
     return df
 
-
-# ----------------------------------------------------------------------------
-# Hindi -> English query translation (the notebook's last cell; used for BM25-Translate)
-# ----------------------------------------------------------------------------
 MT_NAME = "Helsinki-NLP/opus-mt-hi-en"
-
 
 def load_translator():
     import torch
@@ -302,15 +272,12 @@ def load_translator():
 
     return translate_hi_en
 
-
 def run_translate(n):
     translate_hi_en = load_translator()
     hq, _, hmeta = load_set("hi", "hard")
     for qid, text in list(hq.items())[:n]:
         print(f"[{hmeta[qid]}] {text}\n   → {translate_hi_en(text)}\n")
 
-
-# ----------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description="Engine A: BM25 (Pyserini)")
     ap.add_argument("mode", choices=["eval", "demo", "translate"])
@@ -342,7 +309,6 @@ def main():
         for lang in langs:
             engine = BM25Engine(PACKS[lang], lang=lang, load_passages=False)
             show(engine.search(args.query, k=args.k), args.query, extra=f"[{lang}]")
-
 
 if __name__ == "__main__":
     main()
